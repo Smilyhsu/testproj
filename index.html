@@ -22,7 +22,7 @@
             padding: 20px;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1250px;
             margin: 0 auto;
         }
         header {
@@ -97,9 +97,10 @@
         }
         th, td {
             border: 1px solid #cbd5e1;
-            padding: 10px;
+            padding: 12px 10px;
             text-align: center;
             font-size: 14px;
+            vertical-align: middle;
         }
         th { background-color: #f1f5f9; color: var(--primary-color); }
         .tab-buttons {
@@ -119,6 +120,17 @@
             background: var(--primary-color);
             color: white;
         }
+        .legend-container {
+            margin-top: 15px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            padding: 12px;
+            background: #f1f5f9;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
     </style>
 </head>
 <body>
@@ -126,11 +138,10 @@
 <div class="container">
     <header>
         <h1>👟 中央洗鞋廠產能調度與動態模擬系統</h1>
-        <p>調整左側黃色儲存格，系統將即時診斷並重新產生整天 24 小時的流水線表格</p>
+        <p>調整左側黃色儲存格，系統將即時診斷並重新產生帶有「同批同色」視覺化看板的 24 小時動態表</p>
     </header>
 
     <div class="grid-layout">
-        <!-- 輸入參數面板 -->
         <div class="card">
             <h2>1. 廠房硬體與排程參數</h2>
             <div class="input-group">
@@ -177,7 +188,6 @@
             </div>
         </div>
 
-        <!-- 診斷主面板 -->
         <div class="card">
             <h2>2. 數據綜合指標診斷</h2>
             <div class="result-item">
@@ -202,25 +212,27 @@
         </div>
     </div>
 
-    <!-- 動態排程模擬 -->
     <div class="card">
         <h2>3. 廠線逐時流水線模擬動態表</h2>
         <div class="tab-buttons">
             <button class="tab-btn active" id="btn_tab_a" onclick="switchTab('A')">看 A 型架模擬動態</button>
             <button class="tab-btn" id="btn_tab_b" onclick="switchTab('B')">看 B 型架模擬動態</button>
         </div>
+        
+        <div id="color_legend" class="legend-container"></div>
+
         <div class="table-container">
             <table id="schedule_table">
                 <thead>
                     <tr>
-                        <th>時間段</th>
+                        <th style="width: 100px;">時間段</th>
                         <th>W1 (洗)</th>
                         <th>W2 (洗)</th>
                         <th>D1 (房1)</th>
                         <th>D2 (房2)</th>
                         <th>D3 (房3)</th>
                         <th>D4 (房4)</th>
-                        <th>⚠️ 暫存區 (排隊濕鞋)</th>
+                        <th style="width: 180px;">⚠️ 暫存區 (排隊濕鞋)</th>
                     </tr>
                 </thead>
                 <tbody id="table_body">
@@ -232,6 +244,19 @@
 
 <script>
     let currentTab = 'A';
+    
+    // 馬卡龍/柔和高對比色系，確保文字易讀性
+    const batchColors = [
+        '#fef08a', // 🟡 黃色 (批次 1)
+        '#bbf7d0', // 🟢 綠色 (批次 2)
+        '#bfdbfe', // 🔵 藍色 (批次 3)
+        '#fed7aa', // 🟠 橘色 (批次 4)
+        '#e9d5ff', // 🟣 紫色 (批次 5)
+        '#fecaca', // 🔴 紅色 (批次 6)
+        '#fed7e2', // 💗 粉色 (批次 7)
+        '#ccfbf1', // 🟢 薄荷綠 (批次 8)
+        '#e2e8f0'  // ⚪ 灰色 (批次 9+)
+    ];
 
     function switchTab(type) {
         currentTab = type;
@@ -274,11 +299,19 @@
         const diagB = document.getElementById('diag_b');
         if(rate_b >= wash_rate) {
             diagB.className = "status-badge status-success";
-            diagB.innerText = "🟢 B架診斷：時速匹配！白天完全不會積壓濕鞋. ";
+            diagB.innerText = "🟢 B架診斷：時速匹配！白天完全不會積壓濕鞋。";
         } else {
             diagB.className = "status-badge status-error";
             diagB.innerText = "🔴 B架診斷：烘乾太慢！白天暫存區會堆積鞋子。";
         }
+
+        // 動態生成顏色對照組看板
+        let legendHtml = `<strong>🎨 批次顏色對照：</strong>`;
+        for (let i = 0; i < wash_cycles; i++) {
+            const color = batchColors[i % batchColors.length];
+            legendHtml += `<span style="background-color: ${color}; color: #1e293b; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; border: 1px solid rgba(0,0,0,0.1);">批次 ${i+1}</span>`;
+        }
+        document.getElementById('color_legend').innerHTML = legendHtml;
 
         renderSimulation(num_washers, wash_cap, wash_cycles, num_rooms, racks_per_room, currentTab);
     }
@@ -289,45 +322,115 @@
         const room_max_cap = racks_per_room * rack_cap;
         const wash_rate = num_washers * wash_cap;
 
-        let room_shoes = new Array(num_rooms).fill(0);
-        let room_time = new Array(num_rooms).fill(0);
-        let waiting_wet = 0;
+        // 初始化追蹤物件陣列 (最多渲染4間房的欄位)
+        let room_shoes = []; 
+        for (let i = 0; i < 4; i++) room_shoes.push([]); // 二維陣列，存放每一房內含有的批次物件 [{batchId, shoes}]
+        let room_time = new Array(4).fill(0);
+        let waiting_batches = []; // 存放暫存區的排隊批次佇列
         let html = "";
 
         for (let h = 8; h <= 22; h++) {
             let hour_str = (h < 10 ? "0" + h : h) + ":00";
             let is_washing = (h >= 8 && h < 8 + wash_cycles);
-            let w1_status = is_washing ? wash_cap : 0;
-            let w2_status = is_washing ? wash_cap : 0;
+            let batchId = h - 8;
 
-            html += `<tr>
-                <td>${hour_str}</td>
-                <td>${w1_status ? w1_status + ' 雙' : '休息'}</td>
-                <td>${w2_status ? w2_status + ' 雙' : '休息'}</td>
-                <td>${room_shoes[0] ? room_shoes[0] + ' 雙' : '空'}</td>
-                <td>${room_shoes[1] ? room_shoes[1] + ' 雙' : '空'}</td>
-                <td>${room_shoes[2] ? room_shoes[2] + ' 雙' : '空'}</td>
-                <td>${room_shoes[3] ? room_shoes[3] + ' 雙' : '空'}</td>
-                <td style="color:${waiting_wet > 0 ? '#b91c1c' : '#166534'}; font-weight:bold;">${waiting_wet} 雙</td>
-            </tr>`;
+            // 1. 處理洗鞋機欄位樣式
+            let w1_html = '<span style="color: #94a3b8;">休息</span>';
+            let w2_html = '<span style="color: #94a3b8;">休息</span>';
+            if (num_washers < 1) w1_html = '<span style="color: #cbd5e1; font-size:12px;">無配置</span>';
+            if (num_washers < 2) w2_html = '<span style="color: #cbd5e1; font-size:12px;">無配置</span>';
 
-            for (let i = 0; i < num_rooms; i++) {
-                if (room_time[i] > 0) {
-                    room_time[i]--;
-                    if (room_time[i] === 0) room_shoes[i] = 0;
+            if (is_washing) {
+                if (num_washers >= 1) {
+                    const color = batchColors[batchId % batchColors.length];
+                    w1_html = `<span style="background-color: ${color}; color: #1e293b; padding: 4px 8px; border-radius: 4px; font-weight: bold; display: inline-block; border: 1px solid rgba(0,0,0,0.08);">批${batchId + 1}: ${wash_cap}雙</span>`;
+                }
+                if (num_washers >= 2) {
+                    const color = batchColors[batchId % batchColors.length];
+                    w2_html = `<span style="background-color: ${color}; color: #1e293b; padding: 4px 8px; border-radius: 4px; font-weight: bold; display: inline-block; border: 1px solid rgba(0,0,0,0.08);">批${batchId + 1}: ${wash_cap}雙</span>`;
                 }
             }
 
-            if (is_washing) {
-                waiting_wet += wash_rate;
+            // 2. 處理 4 間烘乾房欄位樣式
+            let r_html = [];
+            for (let i = 0; i < 4; i++) {
+                if (i < num_rooms) {
+                    if (room_shoes[i] && room_shoes[i].length > 0) {
+                        let tags = room_shoes[i].map(item => {
+                            const color = batchColors[item.batchId % batchColors.length];
+                            return `<span style="background-color: ${color}; color: #1e293b; padding: 3px 6px; border-radius: 4px; margin: 2px; display: inline-block; font-weight: bold; font-size: 12px; border: 1px solid rgba(0,0,0,0.08);">批${item.batchId + 1}: ${item.shoes}雙</span>`;
+                        }).join('');
+                        r_html.push(`<div>${tags}<span style="color: #64748b; font-size: 11px; display: block; margin-top: 4px; font-weight: bold;">⏳ 倒數 ${room_time[i]}h</span></div>`);
+                    } else {
+                        r_html.push('<span style="color: #94a3b8;">空</span>');
+                    }
+                } else {
+                    r_html.push('<span style="color: #cbd5e1; font-size:12px;">無配置</span>');
+                }
             }
 
+            // 3. 處理暫存區欄位樣式
+            let waiting_html = '';
+            let total_waiting = waiting_batches.reduce((sum, b) => sum + b.shoes, 0);
+            if (total_waiting === 0) {
+                waiting_html = '<span style="color: #166534; font-weight: bold; background: #dcfce7; padding: 3px 8px; border-radius: 20px;">0 雙</span>';
+            } else {
+                waiting_html = `<div><span style="color: #b91c1c; font-weight: bold; display: block; margin-bottom: 5px; font-size:14px;">共 ${total_waiting} 雙</span><div style="display:flex; flex-wrap:wrap; gap:3px; justify-content:center;">`;
+                waiting_html += waiting_batches.map(item => {
+                    if (item.shoes === 0) return '';
+                    const color = batchColors[item.batchId % batchColors.length];
+                    return `<span style="background-color: ${color}; color: #1e293b; padding: 2px 5px; border-radius: 4px; display: inline-block; font-size: 11px; font-weight: bold; border: 1px solid rgba(0,0,0,0.05);">批${item.batchId + 1}: ${item.shoes}雙</span>`;
+                }).join('') + '</div></div>';
+            }
+
+            // 組合列
+            html += `<tr>
+                <td><strong>${hour_str}</strong></td>
+                <td>${w1_html}</td>
+                <td>${w2_html}</td>
+                <td>${r_html[0]}</td>
+                <td>${r_html[1]}</td>
+                <td>${r_html[2]}</td>
+                <td>${r_html[3]}</td>
+                <td>${waiting_html}</td>
+            </tr>`;
+
+            // === 滾動狀態時間推移 (為下一小時做準備) ===
+            // A. 烘乾房時間倒數
             for (let i = 0; i < num_rooms; i++) {
-                if (room_time[i] === 0 && waiting_wet > 0) {
-                    let load = Math.min(waiting_wet, room_max_cap);
-                    room_shoes[i] = load;
-                    room_time[i] = dry_hours;
-                    waiting_wet -= load;
+                if (room_time[i] > 0) {
+                    room_time[i]--;
+                    if (room_time[i] === 0) room_shoes[i] = []; // 時間到，出爐清空
+                }
+            }
+
+            // B. 洗好的新批次加入排隊佇列
+            if (is_washing) {
+                waiting_batches.push({ batchId: batchId, shoes: wash_rate });
+            }
+
+            // C. 推進烘乾房 (先進先出，支援拆批與跨批混塞)
+            for (let i = 0; i < num_rooms; i++) {
+                if (room_time[i] === 0 && waiting_batches.length > 0) {
+                    let space_left = room_max_cap;
+                    room_shoes[i] = [];
+                    
+                    while (space_left > 0 && waiting_batches.length > 0) {
+                        let current_batch = waiting_batches[0];
+                        let load = Math.min(current_batch.shoes, space_left);
+                        
+                        if (load > 0) {
+                            room_shoes[i].push({ batchId: current_batch.batchId, shoes: load });
+                            current_batch.shoes -= load;
+                            space_left -= load;
+                        }
+                        if (current_batch.shoes === 0) {
+                            waiting_batches.shift(); // 該批次排隊清空，移出佇列
+                        }
+                    }
+                    if (room_shoes[i].length > 0) {
+                        room_time[i] = dry_hours; // 有放鞋子進去，啟動計時
+                    }
                 }
             }
         }
